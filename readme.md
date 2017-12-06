@@ -85,7 +85,7 @@ The configuration works as follows:
 
 Nope, this saves all of your account information periodically and reloads it when the server comes back up.
 
-### What are the dependencies?
+### Q:  What are the dependencies?
 
 The deps folder contains the binaries of projects that the mod relies on.  They're bundled into a single dll using the MSBuild.ILMerge Task available at https://www.nuget.org/packages/MSBuild.ILMerge.Task/
 
