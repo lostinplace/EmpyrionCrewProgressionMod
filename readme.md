@@ -54,7 +54,7 @@ Yup, all of the settings are available in the mod folder as `settings.json`.  Th
 
 The configuration works as follows:
 
-```json
+```javascript
 {
 	"actions": [
 		{
