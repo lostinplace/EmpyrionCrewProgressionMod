@@ -7,6 +7,56 @@ using System.IO;
 
 namespace CrewProgressionMod
 {
+
+    public class PlayerNorm
+    {
+        public int experiencePoints;
+        public int upgradePoints;
+
+
+        public PlayerNorm(Account factionAccount, Account personalAccount)
+        {
+            experiencePoints = factionAccount.balances[ResourceType.Experience];
+            upgradePoints = personalAccount.balances[ResourceType.Points];
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (obj is PlayerNorm)
+            {
+                var comp = (PlayerNorm)obj;
+                return comp.experiencePoints == this.experiencePoints && comp.upgradePoints == this.upgradePoints;
+            }
+            return false;
+        }
+
+        public static bool operator ==(PlayerNorm a, PlayerNorm b)
+        {
+            return a.Equals(b);
+        }
+
+        public static bool operator !=(PlayerNorm a, PlayerNorm b)
+        {
+            return !a.Equals(b);
+        }
+    }
+
+    public class PlayerLedger
+    {
+        public Account FactionAccount;
+        public Account PersonalAccount;
+        public PlayerInfo info;
+        public PlayerNorm norm;
+
+        public PlayerLedger(PlayerInfo info, Account factionAccount, Account playerAccount)
+        {
+            this.info = info;
+            FactionAccount = factionAccount;
+            PersonalAccount = playerAccount;
+            norm = new PlayerNorm(factionAccount, playerAccount);
+        }
+    }
+
     enum TransactionType
     {
         UpgradePoints,
@@ -50,6 +100,9 @@ namespace CrewProgressionMod
 
         public string id;
 
+        /// <summary>
+        /// necessary for deserialization
+        /// </summary>
         public Account() {}
 
         public Account(string id,  AccountType type, Dictionary<ResourceType, int> balances)
@@ -83,7 +136,7 @@ namespace CrewProgressionMod
             return new Account(factionId.ToString(), AccountType.Crew, balances); 
         }
 
-        public static Account NewPlayerAccount(PlayerInfo player)
+        public static Account NewPlayerAccount(PlayerInfo player, int points)
         {
             var balances = new Dictionary<ResourceType, int>
             {

@@ -18,17 +18,36 @@ namespace CrewProgressionMod
                 {
                     { @"crew balance",  checkCrewBalance},
                     { @"crew withdraw (.*)",  withdrawUpgradePoints},
-                    { @"crew convert (.*)",  convertCredits}
+                    { @"crew convert (.*)",  convertCredits},
+                    { @"crew help",  getHelp}
                 };
 
             return chatCommands;
+        }
+
+        private static string helpMessage = @"Check balance: ""\crew balance""
+Withdraw X upgrade points from faction: ""\crew withdraw X""
+Convert X personal upgrade points to credits: ""\crew convert X""
+This message: ""\crew help""";
+
+        private void getHelp(ChatInfo data, PString subcommand)
+        {
+            var msg = new IdMsgPrio()
+            {
+                msg = helpMessage,
+                id = data.playerId,
+                prio = 1
+            };
+            var cmd = new APICmd(CmdId.Request_ShowDialog_SinglePlayer, msg);
+
+            broker.ExecuteCommand(cmd);
         }
 
         private void checkCrewBalance(ChatInfo data, PString subcommand)
         {
             var playerId = new Id(data.playerId);
             var cmd = new APICmd(CmdId.Request_Player_Info, playerId);
-            broker.HandleCall<PlayerInfo>(cmd, (cmdId, playerInfo) =>
+            broker.ExecuteCommand<PlayerInfo>(cmd, (cmdId, playerInfo) =>
             {
                 var crewAccount = SafeGetAccount(AccountType.Crew, playerInfo.factionId, playerInfo);
                 var crewBalance = crewAccount.balances[ResourceType.Points];
@@ -42,7 +61,7 @@ namespace CrewProgressionMod
                     prio = 1
                 };
                 var outmsg = new APICmd(CmdId.Request_InGameMessage_SinglePlayer, msg);
-                broker.HandleCall(outmsg);
+                broker.ExecuteCommand(outmsg);
             });
         }
 
@@ -70,7 +89,7 @@ namespace CrewProgressionMod
                     };
 
                     var cmd = new APICmd(CmdId.Request_InGameMessage_Faction, facmsg);
-                    broker.HandleCall(cmd);
+                    broker.ExecuteCommand(cmd);
                 }
                 else
                 {
@@ -84,7 +103,7 @@ namespace CrewProgressionMod
                     prio = (byte) (x.succeeded ? 1:0)
                 };
                 var outmsg = new APICmd(CmdId.Request_InGameMessage_SinglePlayer, msg);
-                broker.HandleCall(outmsg);
+                broker.ExecuteCommand(outmsg);
             });
         }
 
@@ -101,7 +120,7 @@ namespace CrewProgressionMod
                 prio = 1
             };
             var outmsg = new APICmd(CmdId.Request_InGameMessage_SinglePlayer, msg);
-            broker.HandleCall(outmsg);
+            broker.ExecuteCommand(outmsg);
         }
     }
 }

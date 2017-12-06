@@ -8,97 +8,17 @@ using System.Text;
 using EmpyrionAPIMessageBroker;
 using AccountEffectList = System.Collections.Generic.List<System.Func<CrewProgressionMod.Account, CrewProgressionMod.Account>>;
 using LedgerEffectList = System.Collections.Generic.List<System.Func<CrewProgressionMod.PlayerLedger, CrewProgressionMod.PlayerLedger>>;
-using System.IO;
 
 namespace CrewProgressionMod
 {
-    public class PlayerLedger
+    public class TimedEvent
     {
-        public Account FactionAccount;
-        public Account PersonalAccount;
-        public PlayerInfo info;
+        public string name;
+        public ulong interval;
+        public ulong nextOccurence;
+        public Action activity;
 
-        public PlayerLedger(PlayerInfo info, Account factionAccount, Account playerAccount)
-        {
-            this.info = info;
-            FactionAccount = factionAccount;
-            PersonalAccount = playerAccount;
-        }        
-    }
-
-
-    public class ResearchTeam
-    {
-        public PlayerInfo leader;
-        public List<PlayerInfo> members;
-
-        public int teamSize
-        {
-            get
-            {
-                return this.members.Count;
-            }
-        }
-
-        public ResearchTeam()
-        {
-            members = new List<PlayerInfo>();
-        }
-    }
-
-    public class CrewInfo
-    {
-        public Dictionary<int,PlayerInfo> crewMembers;
-        public ResearchTeam researchTeam;
-
-        public CrewInfo()
-        {
-            researchTeam = new ResearchTeam();
-            crewMembers = new Dictionary<int, PlayerInfo>();
-        }
-
-    }
-
-    public class ActionSpecifier
-    {
-        public string ActionName;
-        public int interval;
-
-        public ActionSpecifier() { }
-    }
-
-    public class CrewProgressionManagerSettings
-    {
-        public List<ActionSpecifier> actions;
-        public bool verbose;
-        public double checkinProbability;
-        public double creditExchangeRate;
-
-        public CrewProgressionManagerSettings() {
-            actions = new List<ActionSpecifier>();
-            verbose = true;
-            checkinProbability = 0.5;
-            creditExchangeRate = 1.0;
-        }
-
-        public static CrewProgressionManagerSettings SettingsFromFile(string path)
-        {
-            //try
-            //{
-                using (var reader = new StreamReader(path))
-                {
-                    var st = reader.ReadToEnd();
-                    var d = new Deserializer(true);
-                    var result = d.Deserialize<CrewProgressionManagerSettings>(st);
-                    return result;
-                }
-            //}
-            //catch (Exception ex)
-            //{
-            //    Console.WriteLine(ex.ToString());
-            //    return new CrewProgressionManagerSettings();
-            //}
-        }
+        public TimedEvent() { }
     }
 
     partial class CrewProgressionManager
@@ -118,15 +38,7 @@ namespace CrewProgressionMod
 
         private ChatCommandManager ccm;
 
-        public class TimedEvent
-        {
-            public string name;
-            public ulong interval;
-            public ulong nextOccurence;
-            public Action activity;
-
-            public TimedEvent() { }
-        }
+        private HashSet<int> initializedPlayerIds;
 
         public List<TimedEvent> EventList;
 
@@ -144,6 +56,10 @@ namespace CrewProgressionMod
 
             this.accounts = new Dictionary<string, Account>();
             accountList.ForEach(SaveAccount);
+            var playerIds = accountList
+                .Where(x => x.type == AccountType.Player)
+                .Select(x => int.Parse(x.id));
+            initializedPlayerIds = new HashSet<int>(playerIds);
 
             log(() => $"***loaded with accounts: {Serializer.Serialize(this.accounts)}");
             this.NextCheckin = aBroker.GameAPI.Game_GetTickTime();
@@ -155,7 +71,7 @@ namespace CrewProgressionMod
                 { "Normalize Players", SimpleUpdate },
                 { "Update Points", UpdateWithPointIncrement },
                 { "Evaluate Research Teams", updateCrewResearchTeams },
-                { "Save Accounts",  ()=> Account.SaveAccountListToFile(this.accounts.Values.ToList(), "Content/Mods/CrewProgressionMod/accounts.json") }
+                { "Save Accounts",  ()=> Account.SaveAccountListToFile(this.accounts.Values.ToList(), "Content/Mods/CPM/accounts.json") }
             };
 
             EventList = generateEventList(settings.actions);
@@ -196,8 +112,9 @@ namespace CrewProgressionMod
         {
             var activePlayerAccountEffects = new LedgerEffectList()
             {
+                initializeNewAccount,
                 shiftBalanceToPlayerOnPersonalFaction,
-                captureLevelUpPoints
+                //captureLevelUpPoints
             };
             var activeCrewAccountEffects = new AccountEffectList()
             {
@@ -206,15 +123,15 @@ namespace CrewProgressionMod
             
             var handler = generateActivePlayerListHandler(activeCrewAccountEffects, activePlayerAccountEffects);
             
-            broker.HandleCall<IdList>(CmdId.Request_Player_List, handler);
+            broker.ExecuteCommand<IdList>(CmdId.Request_Player_List, handler);
         }
 
         private Account incrementPointOnActiveFaction(Account factionAccount)
         {
-            var key = factionAccount.id;
+            var key = int.Parse(factionAccount.id);
             log(() => $"*** incrementing faction points for {key}");
             CrewInfo info;
-            info = CrewInfoTracker.TryGetValue(int.Parse(key), out info) ? info : new CrewInfo();
+            info = CrewInfoTracker.TryGetValue(key, out info) ? info : new CrewInfo();
 
             var points = (info.crewMembers.Keys.Count + info.researchTeam.members.Count + (info.researchTeam.leader !=null?1:0));
 
@@ -225,22 +142,30 @@ namespace CrewProgressionMod
             factionAccount.balances[ResourceType.Points] += points;
             var message = generateFactionPointMessage(info, points);
 
+            var singlePlayerCrew = info.crewMembers.Keys.Count == 1;
+            var singlePlayerId = info.crewMembers.Values.First().entityId;
+            var factionId = int.Parse(factionAccount.id);
+
+
             var msg = new IdMsgPrio()
             {
-                id = int.Parse(factionAccount.id),
+                id = singlePlayerCrew ? singlePlayerId: factionId,
                 msg = message,
                 prio = 1
             };
             log(() => $"factionMessage: {message}");
             log(() => $"crewInfo: {Serializer.Serialize(info)}");
-            var cmd = new APICmd(CmdId.Request_InGameMessage_Faction, msg);
-            broker.HandleCall(cmd);
+            var cmdId = singlePlayerCrew ? CmdId.Request_InGameMessage_SinglePlayer : CmdId.Request_InGameMessage_Faction;
+            var cmd = new APICmd(cmdId , msg);
+            broker.ExecuteCommand(cmd);
+            info.researchTeam = new ResearchTeam();
+            CrewInfoTracker[key] = info;
             return factionAccount;
         }
 
         private string generateFactionPointMessage(CrewInfo info, int points)
         {
-            var pointMessage = $"Your faction generated {points} points";
+            var pointMessage = $"Your crew generated {points} points";
             string researchMessage="";
             if(info.researchTeam.leader != null && info.researchTeam.teamSize > 1)
             {
@@ -253,16 +178,27 @@ namespace CrewProgressionMod
         {
             var activePlayerAccountEffects = new LedgerEffectList()
             {
+                initializeNewAccount,
                 shiftBalanceToPlayerOnPersonalFaction,
-                captureLevelUpPoints
+                captureGameEffectPoints
             };
             
             var activeCrewAccountEffects = new AccountEffectList();
             var handler = generateActivePlayerListHandler(activeCrewAccountEffects, activePlayerAccountEffects);
 
-            broker.HandleCall<IdList>(CmdId.Request_Player_List, handler);
+            broker.ExecuteCommand<IdList>(CmdId.Request_Player_List, handler);
         }
 
+        private PlayerLedger initializeNewAccount(PlayerLedger ledger)
+        {
+            if (!initializedPlayerIds.Contains(ledger.info.entityId))
+            {
+                var points = ledger.info.upgrade > settings.startingUpgradePointBalance ? ledger.info.upgrade: settings.startingUpgradePointBalance;
+                ledger.PersonalAccount.balances[ResourceType.Points] = points;
+                initializedPlayerIds.Add(ledger.info.entityId);
+            }
+            return ledger;
+        }
 
         static Random rnd = new Random();
 
@@ -304,7 +240,8 @@ namespace CrewProgressionMod
                 var crew = CrewInfoTracker[item];
                 var crewList = crew.crewMembers.Values.ToList();
                 var researchTeam = GetLargestResearchTeamForDistance(crewList, 100);
-                if (researchTeam.members.Count > crew.researchTeam.teamSize || rnd.NextDouble() < 0.1)
+                
+                if (researchTeam.members.Count > crew.researchTeam.teamSize )
                 {
                     crew.researchTeam = researchTeam;
                 }
@@ -317,7 +254,7 @@ namespace CrewProgressionMod
         {
             var id = new Id(playerId);
             var cmd = new APICmd(CmdId.Request_Player_Info) + id;
-            broker.HandleCall<PlayerInfo>(cmd, (x, y) => {
+            broker.ExecuteCommand<PlayerInfo>(cmd, (x, y) => {
                 log(() => "****player info received");
                 BalanceActionResult result;
                 var factionAccount = SafeGetAccount(AccountType.Crew, y.factionId, y);
@@ -394,7 +331,7 @@ namespace CrewProgressionMod
                 };
 
                 var cmd = new APICmd(CmdId.Request_Player_AddCredits, idCredits);
-                broker.HandleCall(cmd);
+                broker.ExecuteCommand(cmd);
                 result.succeeded = true;
                 
             }
@@ -420,8 +357,10 @@ namespace CrewProgressionMod
             };
 
             var cmd = new APICmd(CmdId.Request_Player_SetPlayerInfo, infoSet);
-            broker.HandleCall(cmd);
+            broker.ExecuteCommand(cmd);
         }
+
+
 
         private void normalizePlayer(PlayerInfo player, Account playerAccount, Account factionAccount)
         {
@@ -435,7 +374,7 @@ namespace CrewProgressionMod
             log(() => $"factionAccount: {Serializer.Serialize(factionAccount)} playerAccount: {Serializer.Serialize(playerAccount)}");
 
             var cmd = new APICmd(CmdId.Request_Player_SetPlayerInfo, infoSet);
-            broker.HandleCall(cmd);
+            broker.ExecuteCommand(cmd);
         }
 
         private Account SafeGetAccount(PlayerInfo player)
@@ -452,7 +391,7 @@ namespace CrewProgressionMod
             if (!tmpAccountFound && type == AccountType.Crew)
                 tmpAccount = Account.NewFactionAccountFromPlayer(player);
             else if (!tmpAccountFound)
-                tmpAccount = Account.NewPlayerAccount(player);
+                tmpAccount = Account.NewPlayerAccount(player, settings.startingUpgradePointBalance);
             
             return tmpAccount;
         }
@@ -477,9 +416,14 @@ namespace CrewProgressionMod
             return ledger;
         }
 
-        private PlayerLedger captureLevelUpPoints(PlayerLedger ledger)
+        private PlayerLedger captureGameEffectPoints(PlayerLedger ledger)
         {
-            if (ledger.PersonalAccount.balances[ResourceType.Points] < ledger.info.upgrade)
+            var norm = new PlayerNorm(ledger.FactionAccount, ledger.PersonalAccount);
+            if (norm != ledger.norm) return ledger;
+
+            log(() => $"norm is {Serializer.Serialize(norm)}\nledger norm is:{Serializer.Serialize(ledger.norm)}\nplayer points is:{ledger.info.upgrade}");
+
+            if (ledger.PersonalAccount.balances[ResourceType.Points] != ledger.info.upgrade)
             {
                 ledger.PersonalAccount.balances[ResourceType.Points] = ledger.info.upgrade;
             }
@@ -500,7 +444,7 @@ namespace CrewProgressionMod
                     var id = new Id(item);
                     var cmd = new APICmd(CmdId.Request_Player_Info) + id;
 
-                    broker.HandleCall<PlayerInfo>(cmd, player =>
+                    broker.ExecuteCommand<PlayerInfo>(cmd, player =>
                     {
                         
                         updatedCrewInfos = UpdatedCrewManifest(updatedCrewInfos, player);
@@ -534,7 +478,15 @@ namespace CrewProgressionMod
             return handler;            
         }
 
-        private void log(Func<String> messageGenerator)
+        public void log(string message)
+        {
+            if (verbose)
+            {
+                broker.GameAPI.Console_Write(message);
+            }
+        }
+
+        public void log(Func<String> messageGenerator)
         {
             if (verbose)
             {

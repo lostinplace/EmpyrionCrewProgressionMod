@@ -32,7 +32,7 @@ namespace CrewProgressionMod
 
         public void Game_Exit()
         {
-            Account.SaveAccountListToFile(cpm.accounts.Values.ToList(), "Content/Mods/CrewProgressionMod/accounts.json");
+            Account.SaveAccountListToFile(cpm.accounts.Values.ToList(), "Content/Mods/CPM/accounts.json");
         }
 
         public void Game_Start(ModGameAPI dediAPI)
@@ -40,8 +40,8 @@ namespace CrewProgressionMod
             GameAPI = dediAPI;
             dediAPI.Console_Write("!!CREW PROGRESSION MOD LOADED!!");
             broker = new MessageBroker(dediAPI);
-            var accounts = Account.AccountsFromFile("Content/Mods/CrewProgressionMod/accounts.json");
-            settings = CrewProgressionManagerSettings.SettingsFromFile("Content/Mods/CrewProgressionMod/settings.json");
+            var accounts = Account.AccountsFromFile("Content/Mods/CPM/accounts.json");
+            settings = CrewProgressionManagerSettings.SettingsFromFile("Content/Mods/CPM/settings.json");
             GameAPI.Console_Write($"SETTINGS****: {Serializer.Serialize(settings)}");
             
             cpm = new CrewProgressionManager(broker, accounts, settings);
@@ -55,7 +55,7 @@ namespace CrewProgressionMod
             // Random tick then checking
             if (rand.NextDouble() < settings.checkinProbability)
             {
-                GameAPI.Console_Write("crew progression mod checkin");
+                cpm.log("crew progression mod checkin");
                 cpm.ExecuteTickedEvents(GameAPI.Game_GetTickTime());
             }
         }
