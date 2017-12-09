@@ -1,0 +1,25 @@
+{
+	"actions": [
+		{
+			"ActionName": "Normalize Players",
+			"interval": 25
+		},
+		{
+			"ActionName": "Update Points",
+			"interval": 4000
+		},
+		{
+			"ActionName": "Evaluate Research Teams",
+			"interval": 50
+		},
+		{
+			"ActionName": "Save Accounts",
+			"interval": 400
+		}
+	],
+	"verbose": false,
+	"checkinProbability": 0.05,
+	"creditExchangeRate": 10.0,
+	"startingUpgradePointBalance": 30,
+	"researchTeamMaxDistance": 100
+}

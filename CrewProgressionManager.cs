@@ -112,16 +112,15 @@ namespace CrewProgressionMod
         {
             var activePlayerAccountEffects = new LedgerEffectList()
             {
-                initializeNewAccount,
                 shiftBalanceToPlayerOnPersonalFaction,
-                //captureLevelUpPoints
+                initializeNewAccount,
             };
             var activeCrewAccountEffects = new AccountEffectList()
             {
                 incrementPointOnActiveFaction
             };
             
-            var handler = generateActivePlayerListHandler(activeCrewAccountEffects, activePlayerAccountEffects);
+            var handler = generateActivePlayerListHandler(activeCrewAccountEffects, activePlayerAccountEffects, true);
             
             broker.ExecuteCommand<IdList>(CmdId.Request_Player_List, handler);
         }
@@ -131,7 +130,9 @@ namespace CrewProgressionMod
             var key = int.Parse(factionAccount.id);
             log(() => $"*** incrementing faction points for {key}");
             CrewInfo info;
+            log(() => $"current crews: {Serializer.Serialize(CrewInfoTracker)}");
             info = CrewInfoTracker.TryGetValue(key, out info) ? info : new CrewInfo();
+            
 
             var points = (info.crewMembers.Keys.Count + info.researchTeam.members.Count + (info.researchTeam.leader !=null?1:0));
 
@@ -142,9 +143,16 @@ namespace CrewProgressionMod
             factionAccount.balances[ResourceType.Points] += points;
             var message = generateFactionPointMessage(info, points);
 
+            if (info.crewMembers.Keys.Count == 0) {
+                log(() => $"crew has no active members {Serializer.Serialize(info)}");
+                return factionAccount;
+            }
+
             var singlePlayerCrew = info.crewMembers.Keys.Count == 1;
+
             var singlePlayerId = info.crewMembers.Values.First().entityId;
             var factionId = int.Parse(factionAccount.id);
+
 
 
             var msg = new IdMsgPrio()
@@ -167,7 +175,7 @@ namespace CrewProgressionMod
         {
             var pointMessage = $"Your crew generated {points} points";
             string researchMessage="";
-            if(info.researchTeam.leader != null && info.researchTeam.teamSize > 1)
+            if(info.researchTeam.leader != null && info.researchTeam.teamSize != 0)
             {
                 researchMessage = $"{info.researchTeam.leader.playerName} is leading a team of {info.researchTeam.teamSize}";
             }
@@ -178,9 +186,10 @@ namespace CrewProgressionMod
         {
             var activePlayerAccountEffects = new LedgerEffectList()
             {
-                initializeNewAccount,
+                
                 shiftBalanceToPlayerOnPersonalFaction,
-                captureGameEffectPoints
+                captureGameEffectPoints,
+                initializeNewAccount,
             };
             
             var activeCrewAccountEffects = new AccountEffectList();
@@ -207,17 +216,24 @@ namespace CrewProgressionMod
             var originIndex = rnd.Next(players.Count);
             var originPlayer = players[originIndex];
             var members = new List<PlayerInfo>();
+
+            log(() => "evaluating research team");
+            log(() => $"origin player {originPlayer.playerName} @ {originIndex}/{players.Count}");
             
             for (int i = 1; i < players.Count; i++)
             {
                 var index = (originIndex + i) % players.Count;
                 var compared = players[index];
-                
-                if(getDistanceBetweenPlayers(originPlayer, compared) < radius)
+
+
+                var distance = getDistanceBetweenPlayers(originPlayer, compared);
+                log(() => $"distance between {originPlayer.playerName} and {compared.playerName} is {distance} ");
+                if ( distance < radius)
                 {
                     members.Add(compared);
                 }
             }
+            log(() => $"research team with {members.Count} members");
             return new ResearchTeam() {
                 leader = originPlayer,
                 members = members
@@ -226,9 +242,9 @@ namespace CrewProgressionMod
 
         private double getDistanceBetweenPlayers(PlayerInfo a, PlayerInfo b)
         {
-            var xDist = Math.Pow(a.pos.x + b.pos.x, 2);
-            var yDist = Math.Pow(a.pos.y + b.pos.y, 2);
-            var zDist = Math.Pow(a.pos.z + b.pos.z, 2);
+            var xDist = Math.Pow(a.pos.x - b.pos.x, 2);
+            var yDist = Math.Pow(a.pos.y - b.pos.y, 2);
+            var zDist = Math.Pow(a.pos.z - b.pos.z, 2);
             return Math.Sqrt(xDist + yDist + zDist);
         }
 
@@ -237,12 +253,18 @@ namespace CrewProgressionMod
         {
             foreach (var item in CrewInfoTracker.Keys.ToList())
             {
+                log(() => $"evaluating research team for {item}");
                 var crew = CrewInfoTracker[item];
                 var crewList = crew.crewMembers.Values.ToList();
-                var researchTeam = GetLargestResearchTeamForDistance(crewList, 100);
-                
+                log(() => $"evaluating research team from {Serializer.Serialize(crewList)}");
+                var researchTeam = GetLargestResearchTeamForDistance(crewList, this.settings.researchTeamMaxDistance);
+                log(() => $"largest research team for {item} was {Serializer.Serialize(researchTeam)}");
+                log(() => $"existing research team for {item} was {Serializer.Serialize(crew.researchTeam)}");
+                log(() => $"{researchTeam.members.Count} vs {crew.researchTeam.teamSize}");
+
                 if (researchTeam.members.Count > crew.researchTeam.teamSize )
                 {
+                    log(() => "updating research team");
                     crew.researchTeam = researchTeam;
                 }
 
@@ -297,7 +319,8 @@ namespace CrewProgressionMod
                 SaveAccount(playerAccount);
                 factionAccount.balances[ResourceType.Points] = result.crewBalance;
                 SaveAccount(factionAccount);
-                normalizePlayer(y, playerAccount, factionAccount);
+                var ledger = new PlayerLedger(y, factionAccount, playerAccount);
+                normalizePlayer(ledger);
 
                 callback(result);
             });
@@ -320,7 +343,7 @@ namespace CrewProgressionMod
                 account.balances[ResourceType.Points] -= points;
                 result.playerBalance = account.balances[ResourceType.Points];
 
-                normalizePlayer(playerId, account);
+                normalizePlayerPoints(playerId, account);
                 SaveAccount(account);
                 
                 log(() => $"*** after account: {Serializer.Serialize(account)}");
@@ -348,7 +371,7 @@ namespace CrewProgressionMod
             accounts[key] = acc;
         }
 
-        private void normalizePlayer(int playerId, Account playerAccount)
+        private void normalizePlayerPoints(int playerId, Account playerAccount)
         {
             var infoSet = new PlayerInfoSet()
             {
@@ -362,16 +385,16 @@ namespace CrewProgressionMod
 
 
 
-        private void normalizePlayer(PlayerInfo player, Account playerAccount, Account factionAccount)
+        private void normalizePlayer(PlayerLedger ledger)
         {
             var infoSet = new PlayerInfoSet()
             {
-                entityId = player.entityId,
-                experiencePoints = factionAccount.balances[ResourceType.Experience],
-                upgradePoints = playerAccount.balances[ResourceType.Points],
+                entityId = ledger.info.entityId,
+                experiencePoints = ledger.FactionAccount.balances[ResourceType.Experience],
+                upgradePoints = ledger.PersonalAccount.balances[ResourceType.Points],
             };
-            log(() => $"normalizing player: {player.playerName} with points: { infoSet.upgradePoints}");
-            log(() => $"factionAccount: {Serializer.Serialize(factionAccount)} playerAccount: {Serializer.Serialize(playerAccount)}");
+            log(() => $"normalizing player: {ledger.info.playerName} with points: { infoSet.upgradePoints}");
+            log(() => $"factionAccount: {Serializer.Serialize(ledger.FactionAccount)} playerAccount: {Serializer.Serialize(ledger.PersonalAccount)}");
 
             var cmd = new APICmd(CmdId.Request_Player_SetPlayerInfo, infoSet);
             broker.ExecuteCommand(cmd);
@@ -430,23 +453,27 @@ namespace CrewProgressionMod
             return ledger;
         }
 
+
+
         private Action<IdList> generateActivePlayerListHandler(
             AccountEffectList activeCrewAccountEffects,
-            LedgerEffectList activePlayerAccountEffects)
+            LedgerEffectList activePlayerAccountEffects,
+            bool resetCrews = false)
         {
             Action<IdList> handler = playerIdList =>
             {
                 var incrementedFactions = new HashSet<int>();
                 var updatedCrewInfos = new Dictionary<int, CrewInfo>();
+                var count = 0;
 
                 foreach (var item in playerIdList.list)
                 {
                     var id = new Id(item);
                     var cmd = new APICmd(CmdId.Request_Player_Info) + id;
+                    
 
                     broker.ExecuteCommand<PlayerInfo>(cmd, player =>
                     {
-                        
                         updatedCrewInfos = UpdatedCrewManifest(updatedCrewInfos, player);
 
                         var factionAccount = SafeGetAccount(AccountType.Crew, player.factionId, player);
@@ -460,6 +487,7 @@ namespace CrewProgressionMod
                             var factionAccountKey = Account.IdKeyFromInfo(AccountType.Crew, player.factionId);
                             var tmpAcct = factionAccount;
                             factionAccount = activeCrewAccountEffects.Aggregate(tmpAcct, (acc, x) => x(acc));
+                            incrementedFactions.Add(player.factionId);
                         }
 
                         var baseLedger = new PlayerLedger(player, factionAccount, playerAccount);
@@ -470,10 +498,16 @@ namespace CrewProgressionMod
                         SaveAccount(playerAccount);
                         SaveAccount(factionAccount);
 
-                        normalizePlayer(player, playerAccount, factionAccount);
+                        normalizePlayer(adjustedLedger);
+                        count++;
+                        log(() => $"normalized {count}/{ playerIdList.list.Count}: {player.playerName}");
+
+                        if(count == playerIdList.list.Count) {
+                            log(() => $"updating crews to: {Serializer.Serialize(CrewInfoTracker)}");
+                            CrewInfoTracker = updatedCrewInfos;
+                        }
                     });
                 }
-                CrewInfoTracker = updatedCrewInfos;
             };
             return handler;            
         }

@@ -19,6 +19,7 @@ namespace CrewProgressionMod
         public double checkinProbability;
         public double creditExchangeRate;
         public int startingUpgradePointBalance;
+        public int researchTeamMaxDistance;
 
         public CrewProgressionManagerSettings() {
             actions = new List<ActionSpecifier>();
@@ -26,6 +27,7 @@ namespace CrewProgressionMod
             checkinProbability = 0.5;
             creditExchangeRate = 1.0;
             startingUpgradePointBalance = 30;
+            researchTeamMaxDistance = 100;
         }
 
         public static CrewProgressionManagerSettings SettingsFromFile(string path)
