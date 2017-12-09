@@ -1,6 +1,6 @@
 ﻿# Empyrion Crew Progression mod
 
-## NOTE:  This is currently in an unstable state, I will update this note when I feel like it has been thoroughly tested.
+## NOTE:  This is currently in an Alpha state.
 
 ## FAQ
 
